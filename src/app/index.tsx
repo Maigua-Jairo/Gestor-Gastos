@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import {ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useState, useMemo } from 'react';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -8,12 +8,25 @@ import { ExpenseItem } from '@/components/ExpenseItem';
 import { AddExpenseModal } from '@/components/AddExpenseModal';
 import { useExpenses } from '@/context/ExpenseContext';
 import { LiquidGlassColors, Spacing } from '@/constants/theme';
+import { Expense } from '@/types/expense';
 
-// Pantalla principal: total del mes, lista de gastos y el boton + para agregar
+// Pantalla principal: total del mes, lista de gastos, filtros de orden y botón +
 export default function HomeScreen() {
   const { getCurrentMonthExpenses, isLoading } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
-  const expenses = getCurrentMonthExpenses();
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null); // Para edición
+  const [sortBy, setSortBy] = useState<'recent' | 'highest'>('recent'); // Estado de ordenamiento
+
+  const rawExpenses = getCurrentMonthExpenses();
+
+  // Lista derivada usando useMemo: ordenamos una copia sin mutar el estado original
+  const expenses = useMemo(() => {
+    const list = [...rawExpenses];
+    if (sortBy === 'highest') {
+      return list.sort((a, b) => b.amount - a.amount); // Mayor a menor monto
+    }
+    return list; // 'recent' (orden cronológico predeterminado)
+  }, [rawExpenses, sortBy]);
 
   return (
     <View style={styles.container}>
@@ -22,7 +35,7 @@ export default function HomeScreen() {
         colors={['#FFF5F9', '#FFE8F0', '#FFF9FC']}
         style={styles.gradient}
       >
-        {/* Circulos de color detras: dan algo que desenfocar a las tarjetas */}
+        {/* Círculos de color detrás: dan algo que desenfocar a las tarjetas */}
         <View pointerEvents="none" style={[styles.orb, styles.orbPink]} />
         <View pointerEvents="none" style={[styles.orb, styles.orbOrange]} />
         <View pointerEvents="none" style={[styles.orb, styles.orbPurple]} />
@@ -32,9 +45,29 @@ export default function HomeScreen() {
             <Text style={styles.appTitle}>Gastos Poliestudiante</Text>
 
             <MonthlyHeader />
+
+            {/* Botones de ordenamiento / filtrado */}
+            <View style={styles.filterContainer}>
+              <TouchableOpacity
+                style={[styles.filterButton, sortBy === 'recent' && styles.filterButtonActive]}
+                onPress={() => setSortBy('recent')}
+              >
+                <Text style={[styles.filterText, sortBy === 'recent' && styles.filterTextActive]}>
+                  Recientes
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.filterButton, sortBy === 'highest' && styles.filterButtonActive]}
+                onPress={() => setSortBy('highest')}
+              >
+                <Text style={[styles.filterText, sortBy === 'highest' && styles.filterTextActive]}>
+                  Mayor Monto
+                </Text>
+              </TouchableOpacity>
+            </View>
           
-          {/* Mientras se leen los datos guardados se muestra un indicador;
-                sin esto se veria un instante el mensaje de "no hay gastos" */}
+            {/* Mientras se leen los datos guardados se muestra un indicador */}
             {isLoading ? (
               <View style={styles.emptyState}>
                 <ActivityIndicator size="large" color={LiquidGlassColors.primary} />
@@ -48,13 +81,19 @@ export default function HomeScreen() {
                   Presiona el botón + para agregar tu primer gasto
                 </Text>
               </View>
-
             ) : (
               <FlatList
                 data={expenses}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item, index }) => (
-                  <ExpenseItem expense={item} index={index} />
+                  <ExpenseItem
+                    expense={item}
+                    index={index}
+                    onEdit={() => {
+                      setSelectedExpense(item);
+                      setModalVisible(true);
+                    }}
+                  />
                 )}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
@@ -62,10 +101,13 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Boton + de la esquina */}
+          {/* Botón + de la esquina */}
           <TouchableOpacity
             style={styles.fab}
-            onPress={() => setModalVisible(true)}
+            onPress={() => {
+              setSelectedExpense(null); // Aseguramos que sea modo creación
+              setModalVisible(true);
+            }}
             activeOpacity={0.8}
           >
             <LinearGradient
@@ -80,7 +122,11 @@ export default function HomeScreen() {
 
           <AddExpenseModal
             visible={modalVisible}
-            onClose={() => setModalVisible(false)}
+            onClose={() => {
+              setModalVisible(false);
+              setSelectedExpense(null);
+            }}
+            expenseToEdit={selectedExpense}
           />
         </SafeAreaView>
       </LinearGradient>
@@ -134,6 +180,34 @@ const styles = StyleSheet.create({
     color: LiquidGlassColors.glassText,
     marginBottom: Spacing.three,
     textAlign: 'center',
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    marginBottom: Spacing.three,
+  },
+  filterButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    paddingVertical: Spacing.two,
+    alignItems: 'center',
+  },
+  filterButtonActive: {
+    backgroundColor: LiquidGlassColors.primary,
+    borderColor: 'transparent',
+  },
+  filterText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: LiquidGlassColors.glassText,
+  },
+  filterTextActive: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: LiquidGlassColors.glassTextLight,
   },
   listContent: {
     paddingBottom: 100,

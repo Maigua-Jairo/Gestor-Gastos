@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Expense } from '@/types/expense';
-import { loadExpenses, saveExpenses } from '@/storage/expenseStorage';
+import { useSQLiteContext } from 'expo-sqlite';
+import { getAllExpenses, insertExpense } from '@/database/expenseRepository';
  
+import { deleteExpense as dbDeleteExpense, updateExpense as dbUpdateExpense } from '@/database/expenseRepository';
+import { deleteReceiptImage } from '@/utils/fileStorage';
+
 interface ExpenseContextType {
   expenses: Expense[];
   // true mientras se leen los gastos guardados al abrir la app
@@ -10,25 +14,32 @@ interface ExpenseContextType {
   addExpense: (expense: Omit<Expense, 'id'>) => Promise<void>;
   getMonthlyTotal: () => number;
   getCurrentMonthExpenses: () => Expense[];
+  //Eliminar una factura
+  deleteExpense: (id: string) => Promise<void>;
+  //Actualizar una Factura
+  updateExpense: (expense: Expense) => Promise<void>;
 }
  
 // Arranca en undefined para poder avisar si alguien usa el hook sin Provider
 const ExpenseContext = createContext<ExpenseContextType | undefined>(undefined);
  
-// Fase 2: los gastos se guardan en el telefono con AsyncStorage,
-// asi que siguen ahi despues de cerrar y volver a abrir la app.
+// Fase 3: los gastos se guardan en una base de datos SQLite dentro del telefono.
+// La interfaz del contexto es la misma de la fase 2, por eso las pantallas no cambian.
 export const ExpenseProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Conexion a la base que abrio SQLiteProvider en _layout.tsx
+  const db = useSQLiteContext();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
  
-  // Se ejecuta una sola vez, cuando el Provider se monta (al abrir la app)
+  // Se ejecuta al montar el Provider (al abrir la app).
+  // db va en las dependencias porque se usa adentro; no cambia mientras la app esta abierta.
   useEffect(() => {
     const cargarGastos = async () => {
       try {
-        const guardados = await loadExpenses();
+        const guardados = await getAllExpenses(db);
         setExpenses(guardados);
       } catch (error) {
-        // Si el JSON esta corrupto o falla la lectura, la app arranca vacia
+        // Si falla la consulta, la app arranca vacia
         console.error('No se pudieron cargar los gastos', error);
       } finally {
         // Haya funcionado o no, ya terminamos de cargar
@@ -37,7 +48,7 @@ export const ExpenseProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
  
     cargarGastos();
-  }, []);
+  }, [db]);
  
   const addExpense = async (expense: Omit<Expense, 'id'>) => {
     // Timestamp + algo aleatorio para que dos gastos seguidos no repitan id
@@ -46,14 +57,13 @@ export const ExpenseProvider: React.FC<{ children: ReactNode }> = ({ children })
       id: Date.now().toString() + Math.random().toString(36).slice(2, 11),
     };
  
-    // Va al principio para que el ultimo gasto salga arriba
-    const updated = [newExpense, ...expenses];
+    // Primero se inserta en la base y DESPUES se actualiza la pantalla.
+    // Si el INSERT falla, lanza el error y el estado no cambia.
+    // Solo se escribe una fila: ya no hace falta reescribir toda la lista.
+    await insertExpense(db, newExpense);
  
-    // Primero se guarda y DESPUES se actualiza la pantalla.
-    // Si saveExpenses falla, lanza el error y el estado no cambia,
-    // asi la pantalla nunca muestra un gasto que no quedo guardado.
-    await saveExpenses(updated);
-    setExpenses(updated);
+    // Va al principio para que el ultimo gasto salga arriba
+    setExpenses((prev) => [newExpense, ...prev]);
   };
  
   const getCurrentMonthExpenses = () => {
@@ -77,6 +87,39 @@ export const ExpenseProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   };
  
+  const deleteExpense = async (id: string) => {
+  // 1. Buscamos si el gasto tiene una factura adjunta para borrar el archivo físico
+  const expenseToDelete = expenses.find((exp) => exp.id === id);
+
+  if (expenseToDelete?.receiptUri) {
+    await deleteReceiptImage(expenseToDelete.receiptUri);
+  }
+
+  // 2. Eliminamos el registro de la base de datos SQLite
+  await dbDeleteExpense(db, id);
+
+  // 3. Actualizamos el estado local removiendo el elemento
+  setExpenses((prev) => prev.filter((exp) => exp.id !== id));
+};
+
+const updateExpense = async (updatedExpense: Expense) => {
+  // Buscamos el gasto original para comparar si tenía factura anterior
+  const originalExpense = expenses.find((exp) => exp.id === updatedExpense.id);
+
+  // Si cambió o eliminó la factura anterior, borramos el archivo viejo del disco
+  if (originalExpense?.receiptUri && originalExpense.receiptUri !== updatedExpense.receiptUri) {
+    await deleteReceiptImage(originalExpense.receiptUri);
+  }
+
+  // Actualizamos en la base de datos SQLite
+  await dbUpdateExpense(db, updatedExpense);
+
+  // Actualizamos el estado local inmutablemente
+  setExpenses((prev) =>
+    prev.map((exp) => (exp.id === updatedExpense.id ? updatedExpense : exp))
+  );
+};
+
   return (
     <ExpenseContext.Provider
       value={{
@@ -85,6 +128,8 @@ export const ExpenseProvider: React.FC<{ children: ReactNode }> = ({ children })
         addExpense,
         getMonthlyTotal,
         getCurrentMonthExpenses,
+        deleteExpense,
+        updateExpense
       }}
     >
       {children}

@@ -1,30 +1,56 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Expense, CATEGORY_ICONS } from '@/types/expense';
 import { GlassCard } from './GlassCard';
 import { LiquidGlassColors, Spacing } from '@/constants/theme';
+import { useExpenses } from '@/context/ExpenseContext';
 
 interface ExpenseItemProps {
   expense: Expense;
-  index: number; // sirve para que cada fila entre un poquito despues de la anterior
+  index: number;
+  onEdit: () => void;
 }
 
-// Una fila de la lista de gastos
-export const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense, index }) => {
-  // Queda algo como "15 oct"
+// Una fila de la lista de gastos con opción de eliminar
+export const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense, index, onEdit }) => {
+  const { deleteExpense } = useExpenses();
+
   const formattedDate = new Date(expense.date).toLocaleDateString('es-ES', {
     day: '2-digit',
     month: 'short',
+    year: 'numeric',
   });
 
-  // Queda algo como "$15.50"
   const formattedAmount = new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
   }).format(expense.amount);
+
+  // Alerta de confirmación antes de proceder con el borrado
+  const handleDeletePress = () => {
+    Alert.alert(
+      'Eliminar gasto',
+      '¿Estás seguro de que deseas eliminar este registro?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteExpense(expense.id);
+            } catch (error) {
+              console.error('Error al eliminar el gasto', error);
+              Alert.alert('Error', 'No se pudo eliminar el gasto.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <Animated.View
@@ -53,10 +79,32 @@ export const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense, index }) => {
               )}
             </View>
           </View>
+
           <View style={styles.rightSection}>
             <Text style={styles.amount}>{formattedAmount}</Text>
             <Text style={styles.date}>{formattedDate}</Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={onEdit}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Editar gasto"
+          >
+            <Text style={styles.editIcon}>✏️</Text>
+          </TouchableOpacity>
+
+          {/* Botón para eliminar el gasto */}
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={handleDeletePress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Eliminar gasto"
+          >
+            <Text style={styles.deleteIcon}>🗑️</Text>
+          </TouchableOpacity>
         </View>
       </GlassCard>
     </Animated.View>
@@ -105,6 +153,7 @@ const styles = StyleSheet.create({
   },
   rightSection: {
     alignItems: 'flex-end',
+    marginRight: Spacing.two,
   },
   amount: {
     fontSize: 18,
@@ -115,5 +164,21 @@ const styles = StyleSheet.create({
   date: {
     fontSize: 12,
     color: LiquidGlassColors.glassTextSecondary,
+  },
+  deleteButton: {
+    padding: Spacing.one,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editButton: {
+    padding: Spacing.one,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editIcon: {
+    fontSize: 18,
+  },
+  deleteIcon: {
+    fontSize: 18,
   },
 });
